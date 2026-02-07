@@ -48,10 +48,16 @@ function isPastDue(date) {
     // Step 3: Click Okta Verify button (Push Notification)
     await page.click('a[aria-label*="push notification to the Okta Verify app"]');
     
-    // Wait for External Research Internships grid to load
-    await page.waitForSelector('[data-automation-id="grid-layout"][aria-label*="External Research Internships"]', { timeout: 60000 });
+    // Step 4: Wait for "Summer Research Internships" text to show up to know that we have loaded into the page
+    await page.waitForSelector('text=Summer Research Internships', { timeout: 60000 });
     
-    // Extract all internship cards
+    // Step 5: Zoom out so that the rest of the content on the page can load
+    await page.evaluate(() => {
+        document.body.style.zoom = '0.05';
+    });
+    
+    // Step 6: Extract all internship cards
+    await page.waitForSelector('[data-automation-id="grid-layout"][aria-label*="External Research Internships"]', { timeout: 60 * 1000 });
     const internships = await page.$$eval(
       '[data-automation-id="grid-layout"][aria-label*="External Research Internships"] [role="listitem"] a[href]',
       (links) =>
@@ -65,11 +71,13 @@ function isPastDue(date) {
           };
         })
     );
+    await page.evaluate(() => { // set zoom back to normal
+        document.body.style.zoom = '1.00';
+    });
     
-    // Filter to inactive internships (due date is past)
+    // Step 7: Filter to inactive internships (due date is past)
     const inactive = [];
     const today = new Date();
-    
     for (const internship of internships) {
       const dueDate = parseDueDate(internship.Text);
       if (dueDate && isPastDue(dueDate)) {
