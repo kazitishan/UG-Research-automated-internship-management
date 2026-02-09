@@ -130,7 +130,6 @@ function isPastDue(date) {
         const filePath = path.join(imagesDir, `${baseName}.${ext}`);
 
         await response.body().then((buffer) => fs.writeFileSync(filePath, buffer));
-        console.log(`Downloaded: ${baseName}.${ext}`);
       } catch (err) {
         console.error(`Failed to download ${internship.Text}:`, err.message);
       }
@@ -144,26 +143,43 @@ function isPastDue(date) {
     // Step 10: Expand the inactive/closed internships section
     await page.click('button[aria-label*="inactive/closed"]');
 
-    // Step 11: Click the Quick links hover label, then Add links button
+    // Step 11: Find out how many inactive internships there currently are
+    let inactiveInternshipsCount = 0;
+    const gridLocators = page.locator('div[data-drag-tag="grid-layout-drag-zone"][data-automation-id="grid-layout"].ms-List');
+    const count = await gridLocators.count();
+    
+    if (count >= 2) {
+      const secondGrid = gridLocators.nth(2);
+      const ariaLabel = await secondGrid.getAttribute('aria-label');
+        
+      if (ariaLabel) {
+        const match = ariaLabel.match(/There are (\d+) items in the list/);
+        if (match && match[1]) {
+          inactiveInternshipsCount = parseInt(match[1], 10);
+        }
+      }
+    }
+
+    // Step 12: Click the Quick links hover label, then Add links button
     await page.click('div[data-automation-id="CanvasControl"][id="5597bd71-4df8-46e5-9ed6-4eb29c72e2e8"]');
     await page.waitForSelector('[data-automation-id="quickLinksTopActionsAddLinks"]', { timeout: 10000 });
     await page.click('[data-automation-id="quickLinksTopActionsAddLinks"]');
     
-    // Step 12: Click on "From a link" button
+    // Step 13: Click on "From a link" button
     await page.waitForSelector('button[title="From a link"]', { timeout: 10000 });
     await page.click('button[title="From a link"]');
     await page.waitForTimeout(1000);
 
-    // Step 13: Wait for and fill in the URL textarea with the first inactive internship link
+    // Step 14: Wait for and fill in the URL textarea with the first inactive internship link
     await page.waitForSelector('textarea[data-automation-id="filePickerLinkTextField"]', { timeout: 10000 });
     await page.fill('textarea[data-automation-id="filePickerLinkTextField"]', inactive[0].Link);
 
-    // Step 14: Click the "Add" button
+    // Step 15: Click the "Add" button
     await page.waitForTimeout(1000);
     await page.getByRole('button').nth(-2).click();
     await page.waitForTimeout(2000);
 
-    // Step 15: Replace the default text in the text input with the internship text
+    // Step 16: Replace the default text in the text input with the internship text
     await page.waitForSelector('input[type="text"][id^="field-"]', { timeout: 10000 });
     
     // Clear the existing value and fill with the internship text
@@ -172,7 +188,7 @@ function isPastDue(date) {
     await textInput.fill(inactive[0].Text);
     await page.waitForTimeout(1000);
 
-    // Step 16: Click the "Open in new tab" checkbox
+    // Step 17: Click the "Open in new tab" checkbox
     await page.waitForSelector('input[data-automation-id="openInNewTabCpanetoggle"]', { timeout: 10000 });
     const checkbox = page.locator('input[data-automation-id="openInNewTabCpanetoggle"]');
     
@@ -181,15 +197,35 @@ function isPastDue(date) {
     if (!isChecked) {
       await checkbox.click();
     }
-    
-    await page.waitForTimeout(1000);
+
+    // Step 18: Click on the new item added, to focus on it to start moving it to the bottom
+    const allFirstItems = page.locator('div[role="presentation"].ms-List-cell[data-list-index="0"][data-automationid="ListCell"]');
+    const newItem = allFirstItems.nth(2);
+    await newItem.click();
+
+    // Step 19: Click on the moving button
+    const movingButton = newItem.locator('div.ms-TooltipHost.ms-TooltipHostShim.ToolbarButtonTooltip button[aria-label*="use ⌘ + left arrow or ⌘ + right arrow to reorder items"]');
+    await movingButton.click();
+
+    // Step 20: Press CMD (⌘) + Right Arrow Key inactiveInternshipsCount number of times
+    for (let i = 0; i < inactiveInternshipsCount; i++) {
+      await page.keyboard.down('Meta');
+      await page.keyboard.press('ArrowRight');
+      await page.keyboard.up('Meta');
+      
+      // Small delay between key presses
+      await page.waitForTimeout(100);
+    }
+
+    // Step 21: Increment inactiveInternshipsCount by 1
+    inactiveInternshipsCount += 1;
 
     // Wait 10000 seconds before ending
     await page.waitForTimeout(10000 * 1000);
     
   } catch (error) {
     console.error('Error:', error.message);
-    await page.waitForTimeout(30000);
+    await page.waitForTimeout(10000 * 1000);
   }
   
   await browser.close();
