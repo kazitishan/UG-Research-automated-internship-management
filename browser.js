@@ -160,65 +160,67 @@ function isPastDue(date) {
       }
     }
 
-    // Step 12: Click the Quick links hover label, then Add links button
-    await page.click('div[data-automation-id="CanvasControl"][id="5597bd71-4df8-46e5-9ed6-4eb29c72e2e8"]');
-    await page.waitForSelector('[data-automation-id="quickLinksTopActionsAddLinks"]', { timeout: 10000 });
-    await page.click('[data-automation-id="quickLinksTopActionsAddLinks"]');
-    
-    // Step 13: Click on "From a link" button
-    await page.waitForSelector('button[title="From a link"]', { timeout: 10000 });
-    await page.click('button[title="From a link"]');
-    await page.waitForTimeout(1000);
-
-    // Step 14: Wait for and fill in the URL textarea with the first inactive internship link
-    await page.waitForSelector('textarea[data-automation-id="filePickerLinkTextField"]', { timeout: 10000 });
-    await page.fill('textarea[data-automation-id="filePickerLinkTextField"]', inactive[0].Link);
-
-    // Step 15: Click the "Add" button
-    await page.waitForTimeout(1000);
-    await page.getByRole('button').nth(-2).click();
-    await page.waitForTimeout(2000);
-
-    // Step 16: Replace the default text in the text input with the internship text
-    await page.waitForSelector('input[type="text"][id^="field-"]', { timeout: 10000 });
-    
-    // Clear the existing value and fill with the internship text
-    const textInput = page.locator('input[type="text"][id^="field-"]').first();
-    await textInput.fill('');
-    await textInput.fill(inactive[0].Text);
-    await page.waitForTimeout(1000);
-
-    // Step 17: Click the "Open in new tab" checkbox
-    await page.waitForSelector('input[data-automation-id="openInNewTabCpanetoggle"]', { timeout: 10000 });
-    const checkbox = page.locator('input[data-automation-id="openInNewTabCpanetoggle"]');
-    
-    // Check if it's already checked, if not, check it
-    const isChecked = await checkbox.isChecked();
-    if (!isChecked) {
-      await checkbox.click();
-    }
-
-    // Step 18: Click on the new item added, to focus on it to start moving it to the bottom
-    const allFirstItems = page.locator('div[role="presentation"].ms-List-cell[data-list-index="0"][data-automationid="ListCell"]');
-    const newItem = allFirstItems.nth(2);
-    await newItem.click();
-
-    // Step 19: Click on the moving button
-    const movingButton = newItem.locator('div.ms-TooltipHost.ms-TooltipHostShim.ToolbarButtonTooltip button[aria-label*="use ⌘ + left arrow or ⌘ + right arrow to reorder items"]');
-    await movingButton.click();
-
-    // Step 20: Press CMD (⌘) + Right Arrow Key inactiveInternshipsCount number of times
-    for (let i = 0; i < inactiveInternshipsCount; i++) {
-      await page.keyboard.down('Meta');
-      await page.keyboard.press('ArrowRight');
-      await page.keyboard.up('Meta');
+    for (const internship of inactive){
+      // Step 12: Click the Quick links hover label, then Add links button
+      await page.click('div[data-automation-id="CanvasControl"][id="5597bd71-4df8-46e5-9ed6-4eb29c72e2e8"]');
+      await page.waitForSelector('[data-automation-id="quickLinksTopActionsAddLinks"]', { timeout: 10000 });
+      await page.click('[data-automation-id="quickLinksTopActionsAddLinks"]');
       
-      // Small delay between key presses
-      await page.waitForTimeout(100);
-    }
+      // Step 13: Click on "From a link" button
+      await page.waitForSelector('button[title="From a link"]', { timeout: 10000 });
+      await page.click('button[title="From a link"]');
+      await page.waitForTimeout(1000);
 
-    // Step 21: Increment inactiveInternshipsCount by 1
-    inactiveInternshipsCount += 1;
+      // Step 14: Wait for and fill in the URL textarea with the first inactive internship link
+      await page.waitForSelector('textarea[data-automation-id="filePickerLinkTextField"]', { timeout: 10000 });
+      await page.fill('textarea[data-automation-id="filePickerLinkTextField"]', internship.Link);
+
+      // Step 15: Click the "Add" button
+      await page.waitForTimeout(1000);
+      await page.getByRole('button').nth(-2).click();
+      await page.waitForTimeout(2000);
+
+      // Step 16: Replace the default text in the text input with the internship text
+      await page.waitForSelector('input[type="text"][id^="field-"]', { timeout: 10000 });
+      
+      // Clear the existing value and fill with the internship text
+      const textInput = page.locator('input[type="text"][id^="field-"]').first();
+      await textInput.fill('');
+      await textInput.fill(internship.Text);
+      await page.waitForTimeout(1000);
+
+      // Step 17: Click the "Open in new tab" checkbox
+      await page.waitForSelector('input[data-automation-id="openInNewTabCpanetoggle"]', { timeout: 10000 });
+      const checkbox = page.locator('input[data-automation-id="openInNewTabCpanetoggle"]');
+      
+      // Check if it's already checked, if not, check it
+      const isChecked = await checkbox.isChecked();
+      if (!isChecked) {
+        await checkbox.click();
+      }
+
+      // Step 18: Click on the new item added, to focus on it to start moving it to the bottom
+      const allFirstItems = page.locator('div[role="presentation"].ms-List-cell[data-list-index="0"][data-automationid="ListCell"]');
+      const newItem = allFirstItems.nth(2);
+      await newItem.click();
+
+      // Step 19: Click on the moving button
+      const movingButton = newItem.locator('div.ms-TooltipHost.ms-TooltipHostShim.ToolbarButtonTooltip button[aria-label*="use ⌘ + left arrow or ⌘ + right arrow to reorder items"]');
+      await movingButton.click();
+
+      // Step 20: Press CMD (⌘) + Right Arrow Key inactiveInternshipsCount number of times
+      for (let i = 0; i < inactiveInternshipsCount; i++) {
+        await page.keyboard.down('Meta');
+        await page.keyboard.press('ArrowRight');
+        await page.keyboard.up('Meta');
+        
+        // Small delay between key presses
+        await page.waitForTimeout(100);
+      }
+
+      // Step 21: Increment inactiveInternshipsCount by 1
+      inactiveInternshipsCount += 1;
+    }
 
     // Wait 10000 seconds before ending
     await page.waitForTimeout(10000 * 1000);
