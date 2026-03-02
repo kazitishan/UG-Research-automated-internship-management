@@ -8,6 +8,7 @@ const excelLink = 'https://stevens0-my.sharepoint.com/:x:/g/personal/amansisi_st
 const portalLink = 'https://stevens0.sharepoint.com/sites/UndergraduateResearch/SitePages/Summer-Internships.aspx';
 const email = process.env.EMAIL;
 const password = process.env.PASSWORD;
+const iframe = false;
 
 // Delete all images in the images directory on startup
 const imagesDir = path.join(__dirname, 'images');
@@ -150,84 +151,144 @@ function isPastDue(date) {
     // Step 10: Expand the inactive/closed internships section
     await page.click('button[aria-label*="inactive/closed"]');
 
-    for (const internship of inactive) {
-      // Step 11: Click the Quick links hover label, then Add links button
-      await page.click('div[data-automation-id="CanvasControl"][id="5597bd71-4df8-46e5-9ed6-4eb29c72e2e8"]');
-      await page.waitForSelector('[data-automation-id="quickLinksTopActionsAddLinks"]', { timeout: 10000 });
-      await page.click('[data-automation-id="quickLinksTopActionsAddLinks"]');
-      
-      // Step 12: Click on "From a link" button
-      const filePickerFrame = page.frameLocator('iframe').last();
-      await filePickerFrame.locator('div[name="From a link"]').waitFor({ state: 'visible', timeout: 10000 });
-      await filePickerFrame.locator('div[name="From a link"]').click();
-      await page.waitForTimeout(5 * 1000); // wait for internal iframe navigation to settle
+    // -----------------------------------------------------------------
+    // Branch based on the presence of an iframe
+    // -----------------------------------------------------------------
+    if (iframe) {
+      for (const internship of inactive) {
+        // Step 11: Click the Quick links hover label, then Add links button
+        await page.click('div[data-automation-id="CanvasControl"][id="5597bd71-4df8-46e5-9ed6-4eb29c72e2e8"]');
+        await page.waitForSelector('[data-automation-id="quickLinksTopActionsAddLinks"]', { timeout: 10000 });
+        await page.click('[data-automation-id="quickLinksTopActionsAddLinks"]');
 
-      // Step 13: Find the correct frame containing the URL input and fill it
-      let filled = false;
-      let linkFrame = null;
+        // Step 12: Click on "From a link" button
+        const filePickerFrame = page.frameLocator('iframe').last();
+        await filePickerFrame.locator('div[name="From a link"]').waitFor({ state: 'visible', timeout: 10000 });
+        await filePickerFrame.locator('div[name="From a link"]').click();
+        await page.waitForTimeout(5 * 1000); // wait for internal iframe navigation to settle
 
-      for (const frame of page.frames()) {
-        try {
-          const urlInput = frame.locator('input[placeholder="https://"]');
-          const count = await urlInput.count();
-          if (count > 0) {
-            await urlInput.waitFor({ state: 'visible', timeout: 10000 });
-            await urlInput.click();
-            await urlInput.fill(internship.Link);
-            filled = true;
-            linkFrame = frame; // save reference for later steps
-            console.log('Filled URL input in frame:', frame.url());
-            break;
+        // Step 13: Find the correct frame containing the URL input and fill it
+        let filled = false;
+        let linkFrame = null;
+
+        for (const frame of page.frames()) {
+          try {
+            const urlInput = frame.locator('input[placeholder="https://"]');
+            const count = await urlInput.count();
+            if (count > 0) {
+              await urlInput.waitFor({ state: 'visible', timeout: 10000 });
+              await urlInput.click();
+              await urlInput.fill(internship.Link);
+              filled = true;
+              linkFrame = frame; // save reference for later steps
+              console.log('Filled URL input in frame:', frame.url());
+              break;
+            }
+          } catch (e) {
+            continue;
           }
-        } catch (e) {
-          continue;
         }
+
+        if (!filled) {
+          throw new Error('Could not find the URL input field in any frame');
+        }
+
+        // Step 14: Click the "Add" button
+        await page.waitForTimeout(1000);
+        const selectButton = linkFrame.locator('button[data-automationid="picker-complete"]');
+        await selectButton.waitFor({ state: 'visible', timeout: 10000 });
+        await selectButton.click();
+        await page.waitForTimeout(2000);
+
+        // Step 15: Replace the default text in the text input with the internship text
+        await page.waitForSelector('input[type="text"][id^="field-"]', { timeout: 10000 });
+
+        const textInput = page.locator('input[type="text"][id^="field-"]').first();
+        await textInput.fill('');
+        await textInput.fill(internship.Text);
+        await page.waitForTimeout(1000);
+
+        // Step 16: Click the "Open in new tab" checkbox
+        await page.waitForSelector('input[data-automation-id="openInNewTabCpanetoggle"]', { timeout: 10000 });
+        const checkbox = page.locator('input[data-automation-id="openInNewTabCpanetoggle"]');
+
+        const isChecked = await checkbox.isChecked();
+        if (!isChecked) {
+          await checkbox.click();
+        }
+
+        // Step 17: Click on the new item added, to focus on it to start moving it to the bottom
+        const allFirstItems = page.locator('div[role="presentation"].ms-List-cell[data-list-index="0"][data-automationid="ListCell"]');
+        const newItem = allFirstItems.nth(2);
+        await newItem.click();
+
+        // Step 18: Click on the moving button
+        const movingButton = newItem.locator('div.ms-TooltipHost.ms-TooltipHostShim.ToolbarButtonTooltip button[aria-label*="use ⌘ + left arrow or ⌘ + right arrow to reorder items"]');
+        await movingButton.click();
+
+        // Step 19: Press CMD (⌘) + Left Arrow Key to move internship to correct position
+        await page.keyboard.down('Meta');
+        await page.keyboard.press('ArrowLeft');
+        await page.keyboard.up('Meta');
+
+        // Sleep for 1 second after internship is added
+        await page.waitForTimeout(1000);
       }
+    } 
+    else {
+      for (const internship of inactive) {
+        // Step 11: Click the Quick links hover label, then Add links button
+        await page.click('div[data-automation-id="CanvasControl"][id="5597bd71-4df8-46e5-9ed6-4eb29c72e2e8"]');
+        await page.waitForSelector('[data-automation-id="quickLinksTopActionsAddLinks"]', { timeout: 10000 });
+        await page.click('[data-automation-id="quickLinksTopActionsAddLinks"]');
 
-      if (!filled) {
-        throw new Error('Could not find the URL input field in any frame');
+        // Step 12: Click on "From a link" button
+        await page.waitForSelector('button[title="From a link"]', { timeout: 10000 });
+        await page.click('button[title="From a link"]');
+        await page.waitForTimeout(1000);
+
+        // Step 13: Wait for and fill in the URL textarea with the internship link
+        await page.waitForSelector('textarea[data-automation-id="filePickerLinkTextField"]', { timeout: 10000 });
+        await page.fill('textarea[data-automation-id="filePickerLinkTextField"]', internship.Link);
+
+        // Step 14: Click the "Add" button
+        await page.waitForTimeout(1000);
+        await page.getByRole('button').nth(-2).click();
+        await page.waitForTimeout(2000);
+
+        // Step 15: Replace the default text in the text input with the internship text
+        await page.waitForSelector('input[type="text"][id^="field-"]', { timeout: 10000 });
+
+        // Clear the existing value and fill with the internship text
+        const textInput = page.locator('input[type="text"][id^="field-"]').first();
+        await textInput.fill('');
+        await textInput.fill(internship.Text);
+        await page.waitForTimeout(1000);
+
+        // Step 16: Click the "Open in new tab" checkbox
+        await page.waitForSelector('input[data-automation-id="openInNewTabCpanetoggle"]', { timeout: 10000 });
+        const checkbox = page.locator('input[data-automation-id="openInNewTabCpanetoggle"]');
+
+        // Check if it's already checked, if not, check it
+        const isChecked = await checkbox.isChecked();
+        if (!isChecked) {
+          await checkbox.click();
+        }
+
+        // Step 17: Click on the new item added, to focus on it to start moving it to the bottom
+        const allFirstItems = page.locator('div[role="presentation"].ms-List-cell[data-list-index="0"][data-automationid="ListCell"]');
+        const newItem = allFirstItems.nth(2);
+        await newItem.click();
+
+        // Step 18: Click on the moving button
+        const movingButton = newItem.locator('div.ms-TooltipHost.ms-TooltipHostShim.ToolbarButtonTooltip button[aria-label*="use ⌘ + left arrow or ⌘ + right arrow to reorder items"]');
+        await movingButton.click();
+
+        // Step 19: Press CMD (⌘) + Left Arrow Key to move internship to correct position
+        await page.keyboard.down('Meta');
+        await page.keyboard.press('ArrowLeft');
+        await page.keyboard.up('Meta');
       }
-
-      // Step 14: Click the "Add" button
-      await page.waitForTimeout(1000);
-      const selectButton = linkFrame.locator('button[data-automationid="picker-complete"]');
-      await selectButton.waitFor({ state: 'visible', timeout: 10000 });
-      await selectButton.click();
-      await page.waitForTimeout(2000);
-
-      // Step 15: Replace the default text in the text input with the internship text
-      await page.waitForSelector('input[type="text"][id^="field-"]', { timeout: 10000 });
-      
-      const textInput = page.locator('input[type="text"][id^="field-"]').first();
-      await textInput.fill('');
-      await textInput.fill(internship.Text);
-      await page.waitForTimeout(1000);
-
-      // Step 16: Click the "Open in new tab" checkbox
-      await page.waitForSelector('input[data-automation-id="openInNewTabCpanetoggle"]', { timeout: 10000 });
-      const checkbox = page.locator('input[data-automation-id="openInNewTabCpanetoggle"]');
-      
-      const isChecked = await checkbox.isChecked();
-      if (!isChecked) {
-        await checkbox.click();
-      }
-
-      // Step 17: Click on the new item added, to focus on it to start moving it to the bottom
-      const allFirstItems = page.locator('div[role="presentation"].ms-List-cell[data-list-index="0"][data-automationid="ListCell"]');
-      const newItem = allFirstItems.nth(2);
-      await newItem.click();
-
-      // Step 18: Click on the moving button
-      const movingButton = newItem.locator('div.ms-TooltipHost.ms-TooltipHostShim.ToolbarButtonTooltip button[aria-label*="use ⌘ + left arrow or ⌘ + right arrow to reorder items"]');
-      await movingButton.click();
-
-      // Step 19: Press CMD (⌘) + Left Arrow Key to move internship to correct position
-      await page.keyboard.down('Meta');
-      await page.keyboard.press('ArrowLeft');
-      await page.keyboard.up('Meta');
-
-      // Sleep for 1 second after internship is added
-      await page.waitForTimeout(1000);
     }
 
     // Wait 10000 seconds before ending
