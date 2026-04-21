@@ -6,18 +6,23 @@ const fs = require('fs');
 
 const excelLink = 'https://stevens0-my.sharepoint.com/:x:/g/personal/amansisi_stevens_edu/IQAPeIiCWRGhT5m2yKSlo5mfASQIQJKu7A1rriAmTScU5xU?e=qdky4a';
 const summerInternshipsLink = 'https://stevens0.sharepoint.com/sites/UndergraduateResearch/SitePages/Summer-Internships.aspx';
-const fellowshipsLink = 'https://stevens0.sharepoint.com/sites/UndergraduateResearch/SitePages/Graduate-Research-Fellowships.aspx ';
+const fellowshipsLink = 'https://stevens0.sharepoint.com/sites/UndergraduateResearch/SitePages/Graduate-Research-Fellowships.aspx';
 const email = process.env.EMAIL;
 const password = process.env.PASSWORD;
-const iframe = false; // Set to true when the site uses an iframe for the file picker
+const iframe = true; // Set to true when the site uses an iframe for the file picker
 
-// Delete all images in the images directory on startup
-const imagesDir = path.join(__dirname, 'images');
-if (fs.existsSync(imagesDir)) {
-  fs.readdirSync(imagesDir).forEach(file => {
-    fs.unlinkSync(path.join(imagesDir, file));
-  });
-}
+// Define separate image folders for internships and fellowships
+const internshipsImagesDir = path.join(__dirname, 'images', 'internships');
+const fellowshipsImagesDir = path.join(__dirname, 'images', 'fellowships');
+
+// Delete all images in both subfolders on startup
+[fellowshipsImagesDir, internshipsImagesDir].forEach(dir => {
+  if (fs.existsSync(dir)) {
+    fs.readdirSync(dir).forEach(file => {
+      fs.unlinkSync(path.join(dir, file));
+    });
+  }
+});
 
 // Parse due date from text like "due Feb. 2, 2026" or "due Feb 2, 2026"
 function parseDueDate(text) {
@@ -53,206 +58,241 @@ function isPastDue(date) {
   return date < today;
 }
 
+// Function to update the Summer Internships page
+async function updateInternshipsPage(page) {
+  // Step 1: Wait for "Summer Research Internships" text to show up to know that we have loaded into the page
+  await page.waitForSelector('text=Summer Research Internships', { timeout: 60000 });
+  
+  // Step 2: Zoom out so that the rest of the content on the page can load
+  await page.evaluate(() => {
+    document.body.style.zoom = '0.05';
+  });
+  
+  // Step 3: Extract all internship cards
+  await page.waitForSelector('[data-automation-id="grid-layout"][aria-label*="External Research Internships"]', { timeout: 60 * 1000 });
+  const internships = await page.$$eval(
+    '[data-automation-id="grid-layout"][aria-label*="External Research Internships"] [role="listitem"] a[href]',
+    (links) =>
+      links.map((link) => {
+        const titleEl = link.querySelector('[data-automation-id="quick-links-item-title"]');
+        const imgEl = link.querySelector('img');
+        return {
+          Text: titleEl ? titleEl.textContent.trim() : '',
+          Link: link.href,
+          Img: imgEl ? imgEl.src : '',
+        };
+      })
+  );
+  await page.evaluate(() => { // set zoom back to normal
+    document.body.style.zoom = '1.00';
+  });
+  
+  // Step 4: Filter to inactive internships (due date is past)
+  const inactive = [];
+  const today = new Date();
+  for (const internship of internships) {
+    const dueDate = parseDueDate(internship.Text);
+    if (dueDate && isPastDue(dueDate)) {
+      inactive.push(internship);
+    }
+  }
+  
+  if (inactive.length === 0) {
+    console.log('No inactive internships to move.');
+    return;
+  } else {
+    console.log('Inactive internships (past due date):');
+    console.log(JSON.stringify(inactive, null, 2));
+  }
+
+  // Step 5: Download images to internships folder
+  fs.mkdirSync(internshipsImagesDir, { recursive: true });
+
+  const request = page.context().request;
+  const seenNames = new Set();
+
+  for (const internship of inactive) {
+    if (!internship.Img) continue;
+
+    let baseName = sanitizeFilename(internship.Text);
+    if (seenNames.has(baseName)) {
+      let i = 1;
+      while (seenNames.has(`${baseName} (${i})`)) i++;
+      baseName = `${baseName} (${i})`;
+    }
+    seenNames.add(baseName);
+
+    try {
+      const response = await request.get(internship.Img);
+      const contentType = response.headers()['content-type'];
+      const ext = getImageExtension(internship.Img, contentType);
+      const filePath = path.join(internshipsImagesDir, `${baseName}.${ext}`);
+
+      await response.body().then((buffer) => fs.writeFileSync(filePath, buffer));
+    } catch (err) {
+      console.error(`Failed to download ${internship.Text}:`, err.message);
+    }
+  }
+
+  // Step 6: Press the edit button
+  await page.waitForSelector('[data-automation-id="pageCommandBarEditButton"]', { timeout: 10000 });
+  await page.click('[data-automation-id="pageCommandBarEditButton"]');
+  await page.waitForTimeout(1000);
+
+  // Step 7: Expand the inactive/closed internships section
+  await page.click('button[aria-label*="inactive/closed"]');
+
+  // Loop through each inactive internship and add it to inactive section
+  for (const internship of inactive) {
+    // Step 8: Click the Quick links hover label, then Add links button
+    await page.click('div[data-automation-id="CanvasControl"][id="5597bd71-4df8-46e5-9ed6-4eb29c72e2e8"]');
+    await page.waitForSelector('[data-automation-id="quickLinksTopActionsAddLinks"]', { timeout: 10000 });
+    await page.click('[data-automation-id="quickLinksTopActionsAddLinks"]');
+
+    // IFRAME VERSION
+    if (iframe) {
+      // Step 9: Click on "From a link" button inside the iframe
+      const filePickerFrame = page.frameLocator('iframe').last();
+      await filePickerFrame.locator('div[name="From a link"]').waitFor({ state: 'visible', timeout: 10000 });
+      await filePickerFrame.locator('div[name="From a link"]').click();
+      await page.waitForTimeout(5 * 1000); // wait for internal iframe navigation to settle
+
+      // Step 10: Find the correct frame containing the URL input and fill it
+      let filled = false;
+      let linkFrame = null;
+
+      for (const frame of page.frames()) {
+        try {
+          const urlInput = frame.locator('input[placeholder="https://"]');
+          const count = await urlInput.count();
+          if (count > 0) {
+            await urlInput.waitFor({ state: 'visible', timeout: 10000 });
+            await urlInput.click();
+            await urlInput.fill(internship.Link);
+            filled = true;
+            linkFrame = frame; // save reference for later steps
+            console.log('Filled URL input in frame:', frame.url());
+            break;
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+
+      if (!filled) {
+        throw new Error('Could not find the URL input field in any frame');
+      }
+
+      // Step 11: Click the "Add" button
+      await page.waitForTimeout(1000);
+      const selectButton = linkFrame.locator('button[data-automationid="picker-complete"]');
+      await selectButton.waitFor({ state: 'visible', timeout: 10000 });
+      await selectButton.click();
+      await page.waitForTimeout(2000);
+    } 
+    // NON‑IFRAME VERSION
+    else {
+      // Step 9: Click on "From a link" button directly
+      await page.waitForSelector('button[title="From a link"]', { timeout: 10000 });
+      await page.click('button[title="From a link"]');
+      await page.waitForTimeout(1000);
+
+      // Step 10: Wait for and fill in the URL textarea with the internship link
+      await page.waitForSelector('textarea[data-automation-id="filePickerLinkTextField"]', { timeout: 10000 });
+      await page.fill('textarea[data-automation-id="filePickerLinkTextField"]', internship.Link);
+
+      // Step 11: Click the "Add" button
+      await page.waitForTimeout(1000);
+      await page.getByRole('button').nth(-2).click();
+      await page.waitForTimeout(2000);
+    }
+
+    // Step 12: Replace the default text in the text input with the internship text
+    await page.waitForTimeout(2000);
+    await page.waitForSelector('input[type="text"][id^="field-"]', { timeout: 10000 });
+
+    const textInput = page.locator('input[type="text"][id^="field-"]').first();
+    await textInput.fill('');
+    await textInput.fill(internship.Text);
+    await page.waitForTimeout(1000);
+
+    // Step 13: Click the "Open in new tab" checkbox
+    await page.waitForSelector('input[data-automation-id="openInNewTabCpanetoggle"]', { timeout: 10000 });
+    const checkbox = page.locator('input[data-automation-id="openInNewTabCpanetoggle"]');
+
+    const isChecked = await checkbox.isChecked();
+    if (!isChecked) {
+      await checkbox.click();
+    }
+
+    // Step 14: Click on the new item added, to focus on it to start moving it to the bottom
+    const allFirstItems = page.locator('div[role="presentation"].ms-List-cell[data-list-index="0"][data-automationid="ListCell"]');
+    const newItem = allFirstItems.nth(2);
+    await newItem.click();
+
+    // Step 15: Click on the moving button
+    const movingButton = newItem.locator('div.ms-TooltipHost.ms-TooltipHostShim.ToolbarButtonTooltip button[aria-label*="use ⌘ + left arrow or ⌘ + right arrow to reorder items"]');
+    await movingButton.click();
+
+    // Step 16: Press CMD (⌘) + Left Arrow Key to move internship to correct position
+    await page.keyboard.down('Meta');
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.up('Meta');
+
+    // Sleep for 1 second after internship is added
+    await page.waitForTimeout(1000);
+  }
+}
+
+// Function to update the Fellowships page
+async function updateFellowshipsPage(page) {
+  await page.goto(fellowshipsLink);
+  console.log('Navigated to fellowships page.');
+  // If images are downloaded, they should go to fellowshipsImagesDir.
+
+  // Step 1: Wait for "Graduate Research Fellowships" text to show up to know that we have loaded into the page
+  await page.waitForSelector('text=Graduate Research Fellowships', { timeout: 60000 });
+
+  // Step 2: Zoom out so that the rest of the content on the page can load
+  await page.evaluate(() => {
+    document.body.style.zoom = '0.05';
+  });
+
+
+}
+
+// Main execution
 (async () => {
   const browser = await chromium.launch({ headless: false });
   const page = await browser.newPage();
   
   try {
+    // Authentication
+    // Step 1: Start by going to the internships page to trigger login
     await page.goto(summerInternshipsLink);
     
-    // Step 1: Entering Email
+    // Step 2: Entering Email
     await page.waitForSelector('#i0116');
     await page.fill('#i0116', email);
     await page.waitForTimeout(1 * 1000);
     await page.click('#idSIButton9');
     
-    // Step 2: Entering Password
+    // Step 3: Entering Password
     await page.waitForSelector('#input28');
     await page.fill('#input28', password);
     await page.waitForTimeout(1 * 1000);
     await page.click('input[type="submit"][value="Verify"]');
     
-    // Step 3: Click Okta Verify button (Push Notification)
+    // Step 4: Click Okta Verify button (Push Notification)
     await page.click('a[aria-label*="push notification to the Okta Verify app"]');
-    
-    // Step 4: Wait for "Summer Research Internships" text to show up to know that we have loaded into the page
-    await page.waitForSelector('text=Summer Research Internships', { timeout: 60000 });
-    
-    // Step 5: Zoom out so that the rest of the content on the page can load
-    await page.evaluate(() => {
-      document.body.style.zoom = '0.05';
-    });
-    
-    // Step 6: Extract all internship cards
-    await page.waitForSelector('[data-automation-id="grid-layout"][aria-label*="External Research Internships"]', { timeout: 60 * 1000 });
-    const internships = await page.$$eval(
-      '[data-automation-id="grid-layout"][aria-label*="External Research Internships"] [role="listitem"] a[href]',
-      (links) =>
-        links.map((link) => {
-          const titleEl = link.querySelector('[data-automation-id="quick-links-item-title"]');
-          const imgEl = link.querySelector('img');
-          return {
-            Text: titleEl ? titleEl.textContent.trim() : '',
-            Link: link.href,
-            Img: imgEl ? imgEl.src : '',
-          };
-        })
-    );
-    await page.evaluate(() => { // set zoom back to normal
-      document.body.style.zoom = '1.00';
-    });
-    
-    // Step 7: Filter to inactive internships (due date is past)
-    const inactive = [];
-    const today = new Date();
-    for (const internship of internships) {
-      const dueDate = parseDueDate(internship.Text);
-      if (dueDate && isPastDue(dueDate)) {
-        inactive.push(internship);
-      }
-    }
-    
-    console.log('Inactive internships (past due date):');
-    console.log(JSON.stringify(inactive, null, 2));
 
-    // Step 8: Download images to images folder
-    fs.mkdirSync(imagesDir, { recursive: true });
+    // Now update the Summer Internships page
+    await updateInternshipsPage(page);
 
-    const request = page.context().request;
-    const seenNames = new Set();
+    // Then update the Fellowships page
+    //await updateFellowshipsPage(page);
 
-    for (const internship of inactive) {
-      if (!internship.Img) continue;
-
-      let baseName = sanitizeFilename(internship.Text);
-      if (seenNames.has(baseName)) {
-        let i = 1;
-        while (seenNames.has(`${baseName} (${i})`)) i++;
-        baseName = `${baseName} (${i})`;
-      }
-      seenNames.add(baseName);
-
-      try {
-        const response = await request.get(internship.Img);
-        const contentType = response.headers()['content-type'];
-        const ext = getImageExtension(internship.Img, contentType);
-        const filePath = path.join(imagesDir, `${baseName}.${ext}`);
-
-        await response.body().then((buffer) => fs.writeFileSync(filePath, buffer));
-      } catch (err) {
-        console.error(`Failed to download ${internship.Text}:`, err.message);
-      }
-    }
-
-    // Step 9: Press the edit button
-    await page.waitForSelector('[data-automation-id="pageCommandBarEditButton"]', { timeout: 10000 });
-    await page.click('[data-automation-id="pageCommandBarEditButton"]');
-    await page.waitForTimeout(1000);
-
-    // Step 10: Expand the inactive/closed internships section
-    await page.click('button[aria-label*="inactive/closed"]');
-
-    // Loop through each inactive internship and add it to inactive section
-    for (const internship of inactive) {
-      // Step 11: Click the Quick links hover label, then Add links button
-      await page.click('div[data-automation-id="CanvasControl"][id="5597bd71-4df8-46e5-9ed6-4eb29c72e2e8"]');
-      await page.waitForSelector('[data-automation-id="quickLinksTopActionsAddLinks"]', { timeout: 10000 });
-      await page.click('[data-automation-id="quickLinksTopActionsAddLinks"]');
-
-      if (iframe) {
-        // IFRAME VERSION
-        // Step 12: Click on "From a link" button inside the iframe
-        const filePickerFrame = page.frameLocator('iframe').last();
-        await filePickerFrame.locator('div[name="From a link"]').waitFor({ state: 'visible', timeout: 10000 });
-        await filePickerFrame.locator('div[name="From a link"]').click();
-        await page.waitForTimeout(5 * 1000); // wait for internal iframe navigation to settle
-
-        // Step 13: Find the correct frame containing the URL input and fill it
-        let filled = false;
-        let linkFrame = null;
-
-        for (const frame of page.frames()) {
-          try {
-            const urlInput = frame.locator('input[placeholder="https://"]');
-            const count = await urlInput.count();
-            if (count > 0) {
-              await urlInput.waitFor({ state: 'visible', timeout: 10000 });
-              await urlInput.click();
-              await urlInput.fill(internship.Link);
-              filled = true;
-              linkFrame = frame; // save reference for later steps
-              console.log('Filled URL input in frame:', frame.url());
-              break;
-            }
-          } catch (e) {
-            continue;
-          }
-        }
-
-        if (!filled) {
-          throw new Error('Could not find the URL input field in any frame');
-        }
-
-        // Step 14: Click the "Add" button
-        await page.waitForTimeout(1000);
-        const selectButton = linkFrame.locator('button[data-automationid="picker-complete"]');
-        await selectButton.waitFor({ state: 'visible', timeout: 10000 });
-        await selectButton.click();
-        await page.waitForTimeout(2000);
-      } else {
-        // NON‑IFRAME VERSION
-        // Step 12: Click on "From a link" button directly
-        await page.waitForSelector('button[title="From a link"]', { timeout: 10000 });
-        await page.click('button[title="From a link"]');
-        await page.waitForTimeout(1000);
-
-        // Step 13: Wait for and fill in the URL textarea with the internship link
-        await page.waitForSelector('textarea[data-automation-id="filePickerLinkTextField"]', { timeout: 10000 });
-        await page.fill('textarea[data-automation-id="filePickerLinkTextField"]', internship.Link);
-
-        // Step 14: Click the "Add" button
-        await page.waitForTimeout(1000);
-        await page.getByRole('button').nth(-2).click();
-        await page.waitForTimeout(2000);
-      }
-
-      // Step 15: Replace the default text in the text input with the internship text
-      await page.waitForTimeout(2000);
-      await page.waitForSelector('input[type="text"][id^="field-"]', { timeout: 10000 });
-
-      const textInput = page.locator('input[type="text"][id^="field-"]').first();
-      await textInput.fill('');
-      await textInput.fill(internship.Text);
-      await page.waitForTimeout(1000);
-
-      // Step 16: Click the "Open in new tab" checkbox
-      await page.waitForSelector('input[data-automation-id="openInNewTabCpanetoggle"]', { timeout: 10000 });
-      const checkbox = page.locator('input[data-automation-id="openInNewTabCpanetoggle"]');
-
-      const isChecked = await checkbox.isChecked();
-      if (!isChecked) {
-        await checkbox.click();
-      }
-
-      // Step 17: Click on the new item added, to focus on it to start moving it to the bottom
-      const allFirstItems = page.locator('div[role="presentation"].ms-List-cell[data-list-index="0"][data-automationid="ListCell"]');
-      const newItem = allFirstItems.nth(2);
-      await newItem.click();
-
-      // Step 18: Click on the moving button
-      const movingButton = newItem.locator('div.ms-TooltipHost.ms-TooltipHostShim.ToolbarButtonTooltip button[aria-label*="use ⌘ + left arrow or ⌘ + right arrow to reorder items"]');
-      await movingButton.click();
-
-      // Step 19: Press CMD (⌘) + Left Arrow Key to move internship to correct position
-      await page.keyboard.down('Meta');
-      await page.keyboard.press('ArrowLeft');
-      await page.keyboard.up('Meta');
-
-      // Sleep for 1 second after internship is added
-      await page.waitForTimeout(1000);
-    }
-
-    // Wait 10000 seconds before ending
+    // Wait 10000 seconds before ending (for observation)
     await page.waitForTimeout(10000 * 1000);
     
   } catch (error) {
